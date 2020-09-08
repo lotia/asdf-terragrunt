@@ -1,18 +1,61 @@
 #!/usr/bin/env bash
 
-releases_path=https://api.github.com/repos/gruntwork-io/terragrunt/releases
-
-if [ -n "${GITHUB_API_TOKEN}" ]; then
-  header="-H 'Authorization: token ${GITHUB_API_TOKEN}'"
-else
-  header=''
-fi
-
-cmd="curl -q ${header} -s ${releases_path}"
-
 function sort_versions() {
   sed 'h; s/[+-]/./g; s/.p\([[:digit:]]\)/.z\1/; s/$/.z/; G; s/\n/ /' | \
     LC_ALL=C sort -t. -k 1,1 -k 2,2n -k 3,3n -k 4,4n -k 5,5n | awk '{print $2}'
 }
 
-echo $(eval "$cmd" | grep -oE "tag_name\": \".{1,15}\"," | sed 's/tag_name\": \"v//;s/\",//' | sort_versions)
+function git_list_refs_tags() {
+  # --refs argument requires git >= 2.8 (March 2016)
+  git ls-remote --refs --tags https://github.com/gruntwork-io/terragrunt.git
+}
+
+function get_tags() {
+  # strip contents until we get v[0-9].v[0-9].v[0-9]
+  sed -E 's/.*refs\/tags\/v?([0-9]+\.[0-9]+\.[0-9]+)/\1/g'
+}
+
+function run_tests() {
+  # Make sure we can handle common arbitrary tag version formats.
+  #
+  # This will exit the program with 0 for success, or a diff and nonzero exit
+  # code if it fails.
+
+  IFS='' read -r -d '' TEST_REFS <<- EOF
+	293407bccc4bf        refs/tags/v1.6.4
+	50db58fe9b03a        refs/tags/v1.6.5
+	91c54cca7e282        refs/tags/v1.6.6
+	8f4144eacf32c        refs/tags/v1.6.7
+	7010ebe23f955        refs/tags/v1.6.8
+	0a93b77d9dc57        refs/tags/v1.7.0
+	0ee9a53f8143e        refs/tags/v1.7.0-rc.1
+	8c1f7ea6d580c        refs/tags/v1.7.0-rc.2
+	3dd648a8e2d75        refs/tags/v1.7.0-rc.3
+	766af5254535d        refs/tags/v1.7.0-rc.4
+	EOF
+
+  IFS='' read -r -d '' EXPECT <<- EOF
+	1.6.4
+	1.6.5
+	1.6.6
+	1.6.7
+	1.6.8
+	1.7.0-rc.1
+	1.7.0-rc.2
+	1.7.0-rc.3
+	1.7.0-rc.4
+	1.7.0
+	EOF
+
+  >&2 echo "Running tests ... "
+  >&2 diff -u \
+      --label "expected" <(echo -n "${EXPECT}") \
+      --label "got" <(echo -n "${TEST_REFS}" | get_tags | sort_versions)
+  result="${?}"
+  [[ "${result}" -eq 0 ]] && >&2 echo "Success!" || >&2 echo "Failed!"
+  exit "${result}"
+}
+
+[[ "${ASDF_TERRAGRUNT_TEST}" = 'true' ]] && run_tests
+
+git_list_refs_tags | get_tags | sort_versions
